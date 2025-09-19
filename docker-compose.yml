@@ -1,3 +1,21 @@
+# version: "3.8"
+
+# services:
+#   mongodb:
+#     image: mongo:6.0
+#     container_name: fastapi-notes-mongodb
+#     ports:
+#       - "27017:27017"
+#     volumes:
+#       - mongo_data:/data/db
+#     environment:
+#       MONGO_INITDB_ROOT_USERNAME: admin
+#       MONGO_INITDB_ROOT_PASSWORD: password123
+#       MONGO_INITDB_DATABASE: notesdb
+
+# volumes:
+#   mongo_data:
+
 version: "3.8"
 
 services:
@@ -12,6 +30,21 @@ services:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: password123
       MONGO_INITDB_DATABASE: notesdb
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: fastapi-notes-express
+    restart: always
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongodb
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: password123
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin
+    depends_on:
+      - mongodb
 
 volumes:
   mongo_data:
