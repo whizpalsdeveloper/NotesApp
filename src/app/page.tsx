@@ -23,12 +23,15 @@ function useNotes() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const refresh = async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await api.listNotes();
+      const data = await api.listNotes({ q: q || undefined, date_from: dateFrom || undefined, date_to: dateTo || undefined });
       setNotes(data);
     } catch (e: any) {
       setError(e.message || "Failed to load notes");
@@ -41,11 +44,11 @@ function useNotes() {
     refresh();
   }, []);
 
-  return { notes, setNotes, loading, error, refresh };
+  return { notes, setNotes, loading, error, refresh, q, setQ, dateFrom, setDateFrom, dateTo, setDateTo };
 }
 
 export default function NotesPage() {
-  const { notes, setNotes, loading, error, refresh } = useNotes();
+  const { notes, setNotes, loading, error, refresh, q, setQ, dateFrom, setDateFrom, dateTo, setDateTo } = useNotes();
 
   // form state
   const [title, setTitle] = useState("");
@@ -80,14 +83,26 @@ export default function NotesPage() {
 
   return (
     <div className="min-h-screen container mx-auto max-w-4xl p-6 space-y-6">
-      <header className="flex items-center justify-between">
-        <div>
+      <header className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="min-w-[180px]">
           <h1 className="text-2xl font-bold">Notes App</h1>
           <p className="text-sm text-muted-foreground">FastAPI + MongoDB + Next.js</p>
         </div>
-        <Button variant="secondary" onClick={refresh} disabled={loading}>
-          Refresh
-        </Button>
+        <div className="flex items-end gap-2 flex-wrap">
+          <div className="flex flex-col">
+            <label className="text-xs text-muted-foreground">Search</label>
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Title or content" />
+          </div>
+          <div className="flex flex-col">
+            <label className="text-xs text-muted-foreground">From</label>
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div className="flex flex-col">
+            <label className="text-xs text-muted-foreground">To</label>
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </div>
+          <Button variant="secondary" onClick={refresh} disabled={loading}>Apply</Button>
+        </div>
       </header>
 
       <Card>

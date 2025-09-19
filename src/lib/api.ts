@@ -22,7 +22,17 @@ export type Note = {
   }
   
   export const api = {
-    listNotes: () => http<Note[]>("/notes"),
+    listNotes: (params?: { q?: string; date_from?: string; date_to?: string }) => {
+      const qs = params
+        ? "?" + new URLSearchParams(
+            Object.entries(params).reduce((acc, [k, v]) => {
+              if (v) acc[k] = v as string;
+              return acc;
+            }, {} as Record<string, string>)
+          ).toString()
+        : "";
+      return http<Note[]>(`/notes${qs}`);
+    },
     getNote: (id: string) => http<Note>(`/notes/${id}`),
     createNote: (data: { title: string; content: string; images?: string[] }) =>
       http<Note>("/notes", { method: "POST", body: JSON.stringify(data) }),
