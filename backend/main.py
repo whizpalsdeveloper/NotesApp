@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -124,9 +124,39 @@ async def health():
 
 
 @app.get("/notes")
-async def list_notes():
+async def list_notes(
+    q: Optional[str] = Query(default=None, description="Search in title/content"),
+    date_from: Optional[str] = Query(default=None, description="Start date YYYY-MM-DD (created_at)"),
+    date_to: Optional[str] = Query(default=None, description="End date YYYY-MM-DD (created_at)"),
+):
     try:
-        cursor = notes_collection().find({}, sort=[("updated_at", -1)])
+        filters: dict = {}
+        # text search
+        if q:
+            filters["$or"] = [
+                {"title": {"$regex": q, "$options": "i"}},
+                {"content": {"$regex": q, "$options": "i"}},
+            ]
+        # date range on created_at (inclusive)
+        if date_from or date_to:
+            from_dt = None
+            to_dt = None
+            try:
+                if date_from:
+                    from_dt = datetime.fromisoformat(f"{date_from}T00:00:00")
+                if date_to:
+                    to_dt = datetime.fromisoformat(f"{date_to}T23:59:59.999999")
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid date format; use YYYY-MM-DD")
+            range_q = {}
+            if from_dt:
+                range_q["$gte"] = from_dt
+            if to_dt:
+                range_q["$lte"] = to_dt
+            if range_q:
+                filters["created_at"] = range_q
+
+        cursor = notes_collection().find(filters, sort=[("updated_at", -1)])
         items = [doc async for doc in cursor]
         # Convert ObjectId to string for JSON serialization
         for item in items:
