@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -8,6 +8,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from pymongo import ReturnDocument
 import logging
+from uuid import uuid4
+from starlette.staticfiles import StaticFiles
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +35,7 @@ class PyObjectId(ObjectId):
 class NoteBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=200, description="Note title")
     content: str = Field("", description="Note content body")
+    images: List[str] = Field(default_factory=list, description="List of image URLs")
 
 
 class NoteCreate(NoteBase):
@@ -66,6 +69,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------- Static files (uploads) ----------
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(os.path.dirname(__file__), "uploads"))
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # ---------- Database Config ----------
 MONGO_USER = os.environ.get("MONGO_USER", "admin")
@@ -146,7 +154,7 @@ async def get_note(note_id: str):
 async def create_note(payload: NoteCreate):
     try:
         now = datetime.utcnow()
-        doc = {"title": payload.title, "content": payload.content, "created_at": now, "updated_at": now}
+        doc = {"title": payload.title, "content": payload.content, "images": payload.images or [], "created_at": now, "updated_at": now}
         result = await notes_collection().insert_one(doc)
         created = await notes_collection().find_one({"_id": result.inserted_id})
         if created:
@@ -189,3 +197,94 @@ async def delete_note(note_id: str):
     except Exception as e:
         logger.error(f"Error deleting note {note_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete note")
+
+
+# ---------- Image upload/delete ----------
+ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
+MAX_FILES_PER_NOTE = int(os.environ.get("MAX_FILES_PER_NOTE", "5"))
+MAX_FILE_SIZE_MB = int(os.environ.get("MAX_FILE_SIZE_MB", "5"))
+
+
+@app.post("/notes/{note_id}/images")
+async def upload_images(note_id: str, files: List[UploadFile] = File(...)):
+    try:
+        note = await notes_collection().find_one({"_id": PyObjectId.validate(note_id)})
+        if not note:
+            raise HTTPException(status_code=404, detail="Note not found")
+
+        existing_images: List[str] = note.get("images", [])
+        remaining_slots = MAX_FILES_PER_NOTE - len(existing_images)
+        if remaining_slots <= 0:
+            raise HTTPException(status_code=400, detail="Image limit reached for this note")
+
+        to_process = files[:remaining_slots]
+        saved_urls: List[str] = []
+
+        for f in to_process:
+            if f.content_type not in ALLOWED_MIME:
+                raise HTTPException(status_code=400, detail=f"Unsupported type: {f.content_type}")
+            # size check by reading into memory in chunks
+            data = await f.read()
+            size_mb = len(data) / (1024 * 1024)
+            if size_mb > MAX_FILE_SIZE_MB:
+                raise HTTPException(status_code=400, detail=f"File too large (> {MAX_FILE_SIZE_MB} MB)")
+            ext = {
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+                "image/webp": ".webp",
+            }[f.content_type]
+            name = f"{uuid4().hex}{ext}"
+            dest_path = os.path.join(UPLOAD_DIR, name)
+            with open(dest_path, "wb") as out:
+                out.write(data)
+            saved_urls.append(f"/uploads/{name}")
+
+        new_images = existing_images + saved_urls
+        updated = await notes_collection().find_one_and_update(
+            {"_id": PyObjectId.validate(note_id)},
+            {"$set": {"images": new_images, "updated_at": datetime.utcnow()}},
+            return_document=ReturnDocument.AFTER,
+        )
+        assert updated is not None
+        updated["_id"] = str(updated["_id"])
+        return updated
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading images for note {note_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upload images")
+
+
+@app.delete("/notes/{note_id}/images")
+async def delete_image(note_id: str, url: str):
+    try:
+        note = await notes_collection().find_one({"_id": PyObjectId.validate(note_id)})
+        if not note:
+            raise HTTPException(status_code=404, detail="Note not found")
+        images: List[str] = note.get("images", [])
+        if url not in images:
+            raise HTTPException(status_code=404, detail="Image not found on this note")
+
+        # remove file from disk if under /uploads
+        if url.startswith("/uploads/"):
+            file_path = os.path.join(UPLOAD_DIR, os.path.basename(url))
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    logger.warning(f"Failed to remove file {file_path}: {e}")
+
+        new_images = [i for i in images if i != url]
+        updated = await notes_collection().find_one_and_update(
+            {"_id": PyObjectId.validate(note_id)},
+            {"$set": {"images": new_images, "updated_at": datetime.utcnow()}},
+            return_document=ReturnDocument.AFTER,
+        )
+        assert updated is not None
+        updated["_id"] = str(updated["_id"])
+        return updated
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting image for note {note_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete image")

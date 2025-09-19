@@ -50,6 +50,7 @@ export default function NotesPage() {
   // form state
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
 
@@ -61,9 +62,15 @@ export default function NotesPage() {
       setSubmitting(true);
       setGlobalError(null);
       const created = await api.createNote({ title: title.trim(), content });
+      if (files.length > 0) {
+        const withImages = await api.uploadImages(created._id, files);
+        setNotes((prev) => [withImages, ...prev]);
+      } else {
       setNotes((prev) => [created, ...prev]);
+      }
       setTitle("");
       setContent("");
+      setFiles([]);
     } catch (e: any) {
       setGlobalError(e.message || "Failed to create note");
     } finally {
@@ -100,6 +107,14 @@ export default function NotesPage() {
             onChange={(e) => setContent(e.target.value)}
             rows={4}
             disabled={submitting} />
+
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            onChange={(e) => setFiles(Array.from(e.target.files || []))}
+            disabled={submitting}
+          />
 
         </CardContent>
         <CardFooter className="gap-2">
@@ -158,6 +173,7 @@ function NoteCard({ note, onUpdated, onLocalUpdate, onLocalDelete
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
+  const [newFiles, setNewFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const updatedAt = new Date(note.updated_at).toLocaleString();
@@ -167,7 +183,12 @@ function NoteCard({ note, onUpdated, onLocalUpdate, onLocalDelete
       setSaving(true);
       setErr(null);
       const updated = await api.updateNote(note._id, { title, content });
-      onLocalUpdate(updated);
+      let finalNote = updated;
+      if (newFiles.length > 0) {
+        finalNote = await api.uploadImages(note._id, newFiles);
+        setNewFiles([]);
+      }
+      onLocalUpdate(finalNote);
       setEditing(false);
     } catch (e: any) {
       setErr(e.message || "Failed to update");
@@ -203,6 +224,42 @@ function NoteCard({ note, onUpdated, onLocalUpdate, onLocalDelete
 
         <p className="whitespace-pre-wrap text-sm">{note.content || ""}</p>
         }
+        {Array.isArray(note.images) && note.images.length > 0 ? (
+          <div className="grid grid-cols-3 gap-2">
+            {note.images.map((src) => (
+              <div key={src} className="relative">
+                <img
+                  src={`${process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000"}${src.startsWith("/") ? src : `/${src}`}`}
+                  alt="note image"
+                  className="h-24 w-full object-cover rounded"
+                />
+                <Button
+                  variant="destructive"
+                  className="mt-1 w-full"
+                  onClick={async () => {
+                    try {
+                      const n = await api.deleteImage(note._id, src);
+                      onLocalUpdate(n);
+                    } catch (e: any) {
+                      setErr(e.message || "Failed to delete image");
+                    }
+                  }}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {editing ? (
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            onChange={(e) => setNewFiles(Array.from(e.target.files || []))}
+          />
+        ) : null}
         {err ? <p className="text-sm text-red-600" role="alert">{err}</p> : null}
       </CardContent>
       <CardFooter className="flex justify-end gap-2">
